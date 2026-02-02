@@ -5,13 +5,14 @@ services:
     image: getmeili/meilisearch:v1.6
     container_name: search-meilisearch
     environment:
-      MEILI_MASTER_KEY: masterKey123
-      MEILI_ENV: development
+      # Taken from host (e.g. EC2 env); no hardcoded secrets
+      MEILI_MASTER_KEY: ${MEILI_MASTER_KEY}
+      MEILI_ENV: ${MEILI_ENV:-development}
     ports:
       - "7700:7700"
     volumes:
       - meili_data:/meili_data
-    command: meilisearch --master-key=masterKey123
+    command: meilisearch
     healthcheck:
       test: ["CMD", "wget", "-q", "-O", "-", "http://localhost:7700/health"]
       interval: 10s
@@ -26,15 +27,17 @@ services:
       dockerfile: Dockerfile
     container_name: search-api
     environment:
-      MEILISEARCH_URL: http://meilisearch:7700
-      MEILISEARCH_MASTER_KEY: masterKey123
-      MYSQL_HOST: ${MYSQL_HOST:-host.docker.internal}
+      # All from host; app fails fast if any required var is missing
+      MYSQL_HOST: ${MYSQL_HOST}
       MYSQL_PORT: ${MYSQL_PORT:-3306}
-      MYSQL_USER: ${MYSQL_USER:-root}
-      MYSQL_PASSWORD: ${MYSQL_PASSWORD:-}
-      MYSQL_DATABASE: ${MYSQL_DATABASE:-cards}
-      SEARCH_ADMIN_API_KEY: ${SEARCH_ADMIN_API_KEY:-}
-      INDEXER_BATCH_SIZE: "5000"
+      MYSQL_USER: ${MYSQL_USER}
+      MYSQL_PASSWORD: ${MYSQL_PASSWORD}
+      MYSQL_DATABASE: ${MYSQL_DATABASE}
+      MEILISEARCH_URL: ${MEILISEARCH_URL:-http://meilisearch:7700}
+      MEILISEARCH_MASTER_KEY: ${MEILISEARCH_MASTER_KEY}
+      MEILISEARCH_INDEX_NAME: ${MEILISEARCH_INDEX_NAME:-cards}
+      SEARCH_ADMIN_API_KEY: ${SEARCH_ADMIN_API_KEY}
+      INDEXER_BATCH_SIZE: ${INDEXER_BATCH_SIZE:-5000}
     ports:
       - "8000:8000"
     depends_on:

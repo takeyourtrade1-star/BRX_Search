@@ -18,13 +18,13 @@ BATCH_SIZE = 5000
 
 
 def _get_mysql_connection():
-    """Create a MySQL connection from settings."""
+    """Create a MySQL connection from settings. Secrets via get_secret_value()."""
     settings = get_settings()
     return pymysql.connect(
         host=settings.MYSQL_HOST,
         port=settings.MYSQL_PORT,
         user=settings.MYSQL_USER,
-        password=settings.MYSQL_PASSWORD,
+        password=settings.MYSQL_PASSWORD.get_secret_value(),
         database=settings.MYSQL_DATABASE,
         charset="utf8mb4",
         cursorclass=pymysql.cursors.DictCursor,
@@ -32,11 +32,11 @@ def _get_mysql_connection():
 
 
 def _get_meilisearch_client() -> Client:
-    """Create Meilisearch client from settings."""
+    """Create Meilisearch client from settings. Secrets via get_secret_value()."""
     settings = get_settings()
     return Client(
         settings.MEILISEARCH_URL,
-        api_key=settings.MEILISEARCH_MASTER_KEY,
+        api_key=settings.MEILISEARCH_MASTER_KEY.get_secret_value(),
     )
 
 
