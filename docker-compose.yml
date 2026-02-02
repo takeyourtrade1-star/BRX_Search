@@ -1,0 +1,51 @@
+version: '3.8'
+
+services:
+  meilisearch:
+    image: getmeili/meilisearch:v1.6
+    container_name: search-meilisearch
+    environment:
+      MEILI_MASTER_KEY: masterKey123
+      MEILI_ENV: development
+    ports:
+      - "7700:7700"
+    volumes:
+      - meili_data:/meili_data
+    command: meilisearch --master-key=masterKey123
+    healthcheck:
+      test: ["CMD", "wget", "-q", "-O", "-", "http://localhost:7700/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - search-network
+
+  search-api:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: search-api
+    environment:
+      MEILISEARCH_URL: http://meilisearch:7700
+      MEILISEARCH_MASTER_KEY: masterKey123
+      MYSQL_HOST: ${MYSQL_HOST:-host.docker.internal}
+      MYSQL_PORT: ${MYSQL_PORT:-3306}
+      MYSQL_USER: ${MYSQL_USER:-root}
+      MYSQL_PASSWORD: ${MYSQL_PASSWORD:-}
+      MYSQL_DATABASE: ${MYSQL_DATABASE:-cards}
+      SEARCH_ADMIN_API_KEY: ${SEARCH_ADMIN_API_KEY:-}
+      INDEXER_BATCH_SIZE: "5000"
+    ports:
+      - "8000:8000"
+    depends_on:
+      meilisearch:
+        condition: service_healthy
+    networks:
+      - search-network
+
+volumes:
+  meili_data:
+
+networks:
+  search-network:
+    driver: bridge

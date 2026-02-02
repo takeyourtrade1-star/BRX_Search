@@ -1,0 +1,1 @@
+# Search (Meilisearch indexer)
