@@ -13,5 +13,8 @@ meilisearch>=0.31.0
 pydantic>=2.5.0
 pydantic-settings>=2.1.0
 
+# JWT validation (RS256, resource server)
+pyjwt[crypto]>=2.8.0
+
 # HTTP client (health checks)
 httpx>=0.26.0

@@ -1,7 +1,7 @@
 from fastapi import APIRouter, Depends, BackgroundTasks, status
 from fastapi.responses import JSONResponse
 
-from app.api.dependencies import require_admin_api_key
+from app.api.dependencies import get_current_superuser
 from app.infrastructure.search.indexer import run_indexer
 import logging
 
@@ -24,11 +24,14 @@ def background_reindex():
 
 @router.post(
     "/reindex",
-    dependencies=[Depends(require_admin_api_key)],
     summary="Trigger full reindex (Async)",
-    status_code=status.HTTP_202_ACCEPTED
+    description="Requires JWT with admin/superuser. Use Authorization: Bearer <access_token>.",
+    status_code=status.HTTP_202_ACCEPTED,
 )
-async def reindex(background_tasks: BackgroundTasks) -> JSONResponse:
+async def reindex(
+    background_tasks: BackgroundTasks,
+    current_user: dict = Depends(get_current_superuser),
+) -> JSONResponse:
     # Lancia il processo in background e risponde SUBITO
     background_tasks.add_task(background_reindex)
 

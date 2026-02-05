@@ -1,6 +1,6 @@
 """
 Search indexer: syncs card prints from MySQL to Meilisearch.
-Print-first search with cross-language support via keywords_localized.
+Print-first search with centralized multilingual support via card_translations + keywords_localized.
 """
 import logging
 from typing import Any
@@ -40,62 +40,53 @@ def _get_meilisearch_client() -> Client:
     )
 
 
-def _build_mtg_translation_map(conn: pymysql.Connection) -> dict[str, list[str]]:
+def _get_translations_for_game(conn: pymysql.Connection, game_slug: str) -> dict[str, list[str]]:
     """
-    Build oracle_id -> list of all printed_name variations (for cross-language search).
-    Uses cards.name; if cards_prints has printed_name we also collect those for full i18n.
+    Load all translations for a game from card_translations.
+    Returns: { entity_id: ["Nome IT", "Nome FR", ...] }.
+    Called once per game at the start of each _index_*_prints for bulk fetch.
     """
-    map_oracle_to_names: dict[str, list[str]] = {}
+    translations: dict[str, list[str]] = {}
     with conn.cursor() as cur:
-        # 1) Canonical name per oracle_id from cards
         cur.execute(
             """
-            SELECT oracle_id, name
-            FROM cards
-            WHERE oracle_id IS NOT NULL AND name IS NOT NULL AND name != ''
-            """
+            SELECT entity_id, translated_name
+            FROM card_translations
+            WHERE game_slug = %s AND translated_name IS NOT NULL AND translated_name != ''
+            """,
+            (game_slug,),
         )
         for row in cur.fetchall():
-            oid = row["oracle_id"]
-            name = (row["name"] or "").strip()
-            if not name:
+            eid = (row["entity_id"] or "").strip()
+            t_name = (row["translated_name"] or "").strip()
+            if not eid or not t_name:
                 continue
-            if oid not in map_oracle_to_names:
-                map_oracle_to_names[oid] = []
-            if name not in map_oracle_to_names[oid]:
-                map_oracle_to_names[oid].append(name)
-        # 2) If cards_prints has printed_name, add all per-print names (e.g. Italian "Mare Sotterraneo")
-        try:
-            cur.execute(
-                """
-                SELECT oracle_id, printed_name AS name
-                FROM cards_prints
-                WHERE oracle_id IS NOT NULL AND printed_name IS NOT NULL AND printed_name != ''
-                """
-            )
-            for row in cur.fetchall():
-                oid = row["oracle_id"]
-                name = (row["name"] or "").strip()
-                if not name:
-                    continue
-                if oid not in map_oracle_to_names:
-                    map_oracle_to_names[oid] = []
-                if name not in map_oracle_to_names[oid]:
-                    map_oracle_to_names[oid].append(name)
-        except pymysql.err.ProgrammingError:
-            # Column printed_name may not exist yet
-            pass
-    return map_oracle_to_names
+            if eid not in translations:
+                translations[eid] = []
+            if t_name not in translations[eid]:
+                translations[eid].append(t_name)
+    return translations
+
+
+def _build_keywords_localized(original_name: str, trans_list: list[str]) -> list[str]:
+    """Original name first, then translations, no duplicates."""
+    keywords = [original_name] if original_name else []
+    for t in trans_list or []:
+        if t and t not in keywords:
+            keywords.append(t)
+    return keywords
 
 
 def _index_mtg_prints(
     conn: pymysql.Connection,
     client: Client,
     index_name: str,
-    translation_map: dict[str, list[str]],
     batch_size: int,
 ) -> int:
-    """Index MTG prints from cards_prints JOIN sets, cards, games."""
+    """Index MTG prints from cards_prints JOIN sets, cards, games. Entity = oracle_id."""
+    logger.info("Fetching MTG translations from card_translations...")
+    trans_map = _get_translations_for_game(conn, "mtg")
+
     count = 0
     with conn.cursor() as cur:
         cur.execute(
@@ -124,11 +115,9 @@ def _index_mtg_prints(
             set_name = (row["set_name"] or "").strip()
             game_slug = (row["game_slug"] or "mtg").strip()
 
-            keywords_localized = list(
-                translation_map.get(oracle_id, [printed_name])
+            keywords_localized = _build_keywords_localized(
+                printed_name, trans_map.get(oracle_id, [])
             )
-            if printed_name not in keywords_localized:
-                keywords_localized.insert(0, printed_name)
 
             doc = {
                 "id": f"mtg_{print_id}",
@@ -152,37 +141,16 @@ def _index_mtg_prints(
     return count
 
 
-def _build_op_translation_map(conn: pymysql.Connection) -> dict[str, list[str]]:
-    """Build card_id -> list of names for One Piece (name_en; add name_it etc. if present)."""
-    map_card_to_names: dict[str, list[str]] = {}
-    with conn.cursor() as cur:
-        cur.execute(
-            """
-            SELECT card_id, name_en
-            FROM op_cards
-            WHERE card_id IS NOT NULL
-            """
-        )
-        for row in cur.fetchall():
-            cid = row["card_id"]
-            name = (row["name_en"] or "").strip()
-            if not name:
-                continue
-            if cid not in map_card_to_names:
-                map_card_to_names[cid] = []
-            if name not in map_card_to_names[cid]:
-                map_card_to_names[cid].append(name)
-    return map_card_to_names
-
-
 def _index_op_prints(
     conn: pymysql.Connection,
     client: Client,
     index_name: str,
-    translation_map: dict[str, list[str]],
     batch_size: int,
 ) -> int:
-    """Index One Piece prints from op_prints JOIN op_cards, sets, games."""
+    """Index One Piece prints from op_prints JOIN op_cards, sets, games. Entity = card_id."""
+    logger.info("Fetching OP translations from card_translations...")
+    trans_map = _get_translations_for_game(conn, "op")
+
     count = 0
     with conn.cursor() as cur:
         cur.execute(
@@ -210,11 +178,9 @@ def _index_op_prints(
             set_name = (row["set_name"] or "").strip()
             game_slug = (row["game_slug"] or "op").strip()
 
-            keywords_localized = list(
-                translation_map.get(card_id, [printed_name])
+            keywords_localized = _build_keywords_localized(
+                printed_name, trans_map.get(card_id, [])
             )
-            if printed_name not in keywords_localized:
-                keywords_localized.insert(0, printed_name)
 
             doc = {
                 "id": f"op_{print_id}",
@@ -238,37 +204,16 @@ def _index_op_prints(
     return count
 
 
-def _build_pk_translation_map(conn: pymysql.Connection) -> dict[str, list[str]]:
-    """Build card_id -> list of names for Pokémon (name_en)."""
-    map_card_to_names: dict[str, list[str]] = {}
-    with conn.cursor() as cur:
-        cur.execute(
-            """
-            SELECT card_id, name_en
-            FROM pk_cards
-            WHERE card_id IS NOT NULL
-            """
-        )
-        for row in cur.fetchall():
-            cid = row["card_id"]
-            name = (row["name_en"] or "").strip()
-            if not name:
-                continue
-            if cid not in map_card_to_names:
-                map_card_to_names[cid] = []
-            if name not in map_card_to_names[cid]:
-                map_card_to_names[cid].append(name)
-    return map_card_to_names
-
-
 def _index_pk_prints(
     conn: pymysql.Connection,
     client: Client,
     index_name: str,
-    translation_map: dict[str, list[str]],
     batch_size: int,
 ) -> int:
-    """Index Pokémon prints from pk_prints JOIN pk_cards, sets, games. Uses image_url."""
+    """Index Pokémon prints from pk_prints JOIN pk_cards, sets, games. Entity = card_id. Uses image_url."""
+    logger.info("Fetching PK translations from card_translations...")
+    trans_map = _get_translations_for_game(conn, "pk")
+
     count = 0
     with conn.cursor() as cur:
         cur.execute(
@@ -292,15 +237,13 @@ def _index_pk_prints(
             print_id = row["print_id"]
             card_id = row["card_id"] or ""
             printed_name = (row["printed_name"] or "").strip() or "Unknown"
-            image_path = (row["image_path"] or "").strip()  # image_url mapped to image_path
+            image_path = (row["image_path"] or "").strip()
             set_name = (row["set_name"] or "").strip()
             game_slug = (row["game_slug"] or "pk").strip()
 
-            keywords_localized = list(
-                translation_map.get(card_id, [printed_name])
+            keywords_localized = _build_keywords_localized(
+                printed_name, trans_map.get(card_id, [])
             )
-            if printed_name not in keywords_localized:
-                keywords_localized.insert(0, printed_name)
 
             doc = {
                 "id": f"pk_{print_id}",
@@ -325,16 +268,17 @@ def _index_pk_prints(
 
 
 def _configure_meilisearch_index(client: Client, index_name: str) -> None:
-    """Set searchable attributes: name, keywords_localized, set_name."""
+    """Searchable: name and keywords_localized first, then set_name. Filterable: game_slug, set_name."""
     index = client.index(index_name)
     index.update_searchable_attributes(
         ["name", "keywords_localized", "set_name"]
     )
+    index.update_filterable_attributes(["game_slug", "set_name"])
 
 
 def run_indexer() -> dict[str, Any]:
     """
-    Full reindex: build translation maps, index MTG then OP then PK, configure settings.
+    Full reindex: load translations per game from card_translations, index MTG/OP/PK, configure Meilisearch.
     Returns a summary with counts and any error message.
     """
     settings = get_settings()
@@ -357,28 +301,21 @@ def run_indexer() -> dict[str, Any]:
         return result
 
     try:
-        # Ensure index exists (create or replace)
         try:
             client.get_index(index_name)
         except MeilisearchError:
             client.create_index(index_name, {"primaryKey": "id"})
 
-        # Translation maps (efficient single queries)
-        logger.info("Building MTG translation map...")
-        mtg_map = _build_mtg_translation_map(conn)
-        logger.info("Building OP translation map...")
-        op_map = _build_op_translation_map(conn)
-        logger.info("Building PK translation map...")
-        pk_map = _build_pk_translation_map(conn)
-
-        # Index all games
-        result["mtg"] = _index_mtg_prints(conn, client, index_name, mtg_map, batch_size)
-        result["op"] = _index_op_prints(conn, client, index_name, op_map, batch_size)
-        result["pk"] = _index_pk_prints(conn, client, index_name, pk_map, batch_size)
+        result["mtg"] = _index_mtg_prints(conn, client, index_name, batch_size)
+        result["op"] = _index_op_prints(conn, client, index_name, batch_size)
+        result["pk"] = _index_pk_prints(conn, client, index_name, batch_size)
         result["total"] = result["mtg"] + result["op"] + result["pk"]
 
         _configure_meilisearch_index(client, index_name)
-        logger.info("Reindex complete: mtg=%d op=%d pk=%d total=%d", result["mtg"], result["op"], result["pk"], result["total"])
+        logger.info(
+            "Reindex complete: mtg=%d op=%d pk=%d total=%d",
+            result["mtg"], result["op"], result["pk"], result["total"],
+        )
     except Exception as e:
         logger.exception("Indexer failed")
         result["error"] = str(e)

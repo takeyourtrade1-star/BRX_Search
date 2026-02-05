@@ -1,54 +1,84 @@
 version: '3.8'
 
 services:
+  # ---------------------------------------------------------------------------
+  # 1. AUTH SERVICE (Gestione Utenti - Postgres)
+  # ---------------------------------------------------------------------------
+  auth-service:
+    image: 000876600482.dkr.ecr.eu-south-1.amazonaws.com/ebartex-auth:latest
+    ports:
+      - "8000:8000"
+    environment:
+      # La password del DB Auth viene iniettata dallo script start.sh
+      - DATABASE_URL=postgresql+asyncpg://brx_bd_admin:${DB_PASS}@ebartex-db-postgres.czuw0wy289sx.eu-south-1.rds.amazonaws.com:5432/ebartex_auth_db
+      # Chiave per JWT/sessioni: imposta SECRET_KEY (o AUTH_SECRET_KEY) in start.sh / env host
+      - SECRET_KEY=${SECRET_KEY}
+    networks:
+      - app_network
+    restart: always
+
+  # ---------------------------------------------------------------------------
+  # 2. MEILISEARCH (Motore di Ricerca)
+  # ---------------------------------------------------------------------------
   meilisearch:
     image: getmeili/meilisearch:v1.6
     container_name: search-meilisearch
-    environment:
-      # Taken from host (e.g. EC2 env); no hardcoded secrets
-      MEILI_MASTER_KEY: ${MEILI_MASTER_KEY}
-      MEILI_ENV: ${MEILI_ENV:-development}
     ports:
       - "7700:7700"
+    environment:
+      # La Master Key viene iniettata dallo script start.sh
+      - MEILI_MASTER_KEY=${MEILISEARCH_MASTER_KEY}
+      - MEILI_ENV=production
+      - MEILI_NO_ANALYTICS=true
     volumes:
       - meili_data:/meili_data
-    command: meilisearch
+    networks:
+      - app_network
+    restart: always
     healthcheck:
       test: ["CMD", "wget", "-q", "-O", "-", "http://localhost:7700/health"]
       interval: 10s
       timeout: 5s
       retries: 5
-    networks:
-      - search-network
 
-  search-api:
-    build:
-      context: .
-      dockerfile: Dockerfile
+  # ---------------------------------------------------------------------------
+  # 3. SEARCH SERVICE (Il Microservizio creato da Cursor)
+  # ---------------------------------------------------------------------------
+  search-service:
+    # Usiamo l'immagine che abbiamo pushato su ECR, NON "build: ."
+    image: 000876600482.dkr.ecr.eu-south-1.amazonaws.com/ebartex-search:latest
     container_name: search-api
-    environment:
-      # All from host; app fails fast if any required var is missing
-      MYSQL_HOST: ${MYSQL_HOST}
-      MYSQL_PORT: ${MYSQL_PORT:-3306}
-      MYSQL_USER: ${MYSQL_USER}
-      MYSQL_PASSWORD: ${MYSQL_PASSWORD}
-      MYSQL_DATABASE: ${MYSQL_DATABASE}
-      MEILISEARCH_URL: ${MEILISEARCH_URL:-http://meilisearch:7700}
-      MEILISEARCH_MASTER_KEY: ${MEILISEARCH_MASTER_KEY}
-      MEILISEARCH_INDEX_NAME: ${MEILISEARCH_INDEX_NAME:-cards}
-      SEARCH_ADMIN_API_KEY: ${SEARCH_ADMIN_API_KEY}
-      INDEXER_BATCH_SIZE: ${INDEXER_BATCH_SIZE:-5000}
     ports:
-      - "8000:8000"
+      - "8001:8000" # Mappiamo la 8001 esterna alla 8000 interna
+    environment:
+      # --- CONNESSIONE MYSQL (Database Carte RDS) ---
+      # Questi dati sono fissi (non segreti)
+      - MYSQL_HOST=ebartex-cards-db.czuw0wy289sx.eu-south-1.rds.amazonaws.com
+      - MYSQL_PORT=3306
+      - MYSQL_USER=admin
+      - MYSQL_DATABASE=ebartex_items
+      
+      # QUESTA è la password segreta iniettata da start.sh
+      - MYSQL_PASSWORD=${MYSQL_PASSWORD}
+
+      # --- CONNESSIONE MEILISEARCH ---
+      - MEILISEARCH_URL=http://meilisearch:7700
+      - MEILISEARCH_MASTER_KEY=${MEILISEARCH_MASTER_KEY}
+      - MEILISEARCH_INDEX_NAME=cards
+      
+      # --- SICUREZZA API ---
+      - SEARCH_ADMIN_API_KEY=${SEARCH_ADMIN_API_KEY}
+      - INDEXER_BATCH_SIZE=5000
     depends_on:
       meilisearch:
         condition: service_healthy
     networks:
-      - search-network
+      - app_network
+    restart: always
 
 volumes:
   meili_data:
 
 networks:
-  search-network:
+  app_network:
     driver: bridge

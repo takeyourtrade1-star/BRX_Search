@@ -25,3 +25,11 @@ Thumbs.db
 
 # Logs
 *.log
+
+# Excluded from BRX_Search repo push
+schema-db-cards.sql
+extract_mtg_cards.py
+extract_pk_cards.py
+extract_op_cards.py
+migrations/
+output/

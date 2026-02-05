@@ -41,10 +41,14 @@ class Settings(BaseSettings):
         description="Number of documents per batch when indexing",
     )
 
-    # Security — required (no optional bypass)
-    SEARCH_ADMIN_API_KEY: SecretStr = Field(
+    # JWT (Resource Server: validate tokens from Auth Service with public key only)
+    JWT_PUBLIC_KEY: SecretStr = Field(
         ...,
-        description="API key required for POST /api/admin/reindex (X-Admin-Key header)",
+        description="RSA public key (PEM) to verify JWT signatures from Auth Service",
+    )
+    JWT_ALGORITHM: str = Field(
+        default="RS256",
+        description="JWT signing algorithm (must match Auth Service)",
     )
 
 
