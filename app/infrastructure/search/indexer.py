@@ -93,9 +93,9 @@ def _index_mtg_prints(
             """
             SELECT
                 cp.id AS print_id,
+                cp.set_id,
                 cp.oracle_id,
                 COALESCE(c.name, '') AS printed_name,
-                cp.image_path,
                 COALESCE(s.name, '') AS set_name,
                 COALESCE(g.slug, 'mtg') AS game_slug
             FROM cards_prints cp
@@ -109,11 +109,12 @@ def _index_mtg_prints(
         batch: list[dict[str, Any]] = []
         for row in cur:
             print_id = row["print_id"]
+            set_id = row["set_id"]
             oracle_id = row["oracle_id"] or ""
             printed_name = (row["printed_name"] or "").strip() or "Unknown"
-            image_path = (row["image_path"] or "").strip()
             set_name = (row["set_name"] or "").strip()
             game_slug = (row["game_slug"] or "mtg").strip()
+            image_path = f"cards/{str(set_id)}/{str(print_id)}.jpg"
 
             keywords_localized = _build_keywords_localized(
                 printed_name, trans_map.get(oracle_id, [])
@@ -124,6 +125,8 @@ def _index_mtg_prints(
                 "name": printed_name,
                 "set_name": set_name,
                 "game_slug": game_slug,
+                "category_id": 1,
+                "category_name": "Carta Singola",
                 "image": image_path,
                 "keywords_localized": keywords_localized,
             }
@@ -157,9 +160,9 @@ def _index_op_prints(
             """
             SELECT
                 op.id AS print_id,
+                op.set_id,
                 op.card_id,
                 COALESCE(oc.name_en, '') AS printed_name,
-                op.image_path,
                 COALESCE(s.name, '') AS set_name,
                 COALESCE(g.slug, 'op') AS game_slug
             FROM op_prints op
@@ -172,11 +175,12 @@ def _index_op_prints(
         batch: list[dict[str, Any]] = []
         for row in cur:
             print_id = row["print_id"]
+            set_id = row["set_id"]
             card_id = row["card_id"] or ""
             printed_name = (row["printed_name"] or "").strip() or "Unknown"
-            image_path = (row["image_path"] or "").strip()
             set_name = (row["set_name"] or "").strip()
             game_slug = (row["game_slug"] or "op").strip()
+            image_path = f"cards/{str(set_id)}/{str(print_id)}.jpg"
 
             keywords_localized = _build_keywords_localized(
                 printed_name, trans_map.get(card_id, [])
@@ -187,6 +191,8 @@ def _index_op_prints(
                 "name": printed_name,
                 "set_name": set_name,
                 "game_slug": game_slug,
+                "category_id": 1,
+                "category_name": "Carta Singola",
                 "image": image_path,
                 "keywords_localized": keywords_localized,
             }
@@ -220,9 +226,9 @@ def _index_pk_prints(
             """
             SELECT
                 pp.id AS print_id,
+                pp.set_id,
                 pp.card_id,
                 COALESCE(pc.name_en, '') AS printed_name,
-                pp.image_url AS image_path,
                 COALESCE(s.name, '') AS set_name,
                 COALESCE(g.slug, 'pk') AS game_slug
             FROM pk_prints pp
@@ -235,11 +241,12 @@ def _index_pk_prints(
         batch: list[dict[str, Any]] = []
         for row in cur:
             print_id = row["print_id"]
+            set_id = row["set_id"]
             card_id = row["card_id"] or ""
             printed_name = (row["printed_name"] or "").strip() or "Unknown"
-            image_path = (row["image_path"] or "").strip()
             set_name = (row["set_name"] or "").strip()
             game_slug = (row["game_slug"] or "pk").strip()
+            image_path = f"cards/{str(set_id)}/{str(print_id)}.jpg"
 
             keywords_localized = _build_keywords_localized(
                 printed_name, trans_map.get(card_id, [])
@@ -250,6 +257,8 @@ def _index_pk_prints(
                 "name": printed_name,
                 "set_name": set_name,
                 "game_slug": game_slug,
+                "category_id": 1,
+                "category_name": "Carta Singola",
                 "image": image_path,
                 "keywords_localized": keywords_localized,
             }
@@ -267,13 +276,70 @@ def _index_pk_prints(
     return count
 
 
+def _index_sealed_products(
+    conn: pymysql.Connection,
+    client: Client,
+    index_name: str,
+    batch_size: int,
+) -> int:
+    """Index sealed products (box, bustine, mazzi) from sealed_products JOIN sets, games. Excludes category_id 1 (singles)."""
+    count = 0
+    with conn.cursor() as cur:
+        cur.execute(
+            """
+            SELECT
+                sp.id AS product_id,
+                sp.set_id,
+                COALESCE(sp.name_en, sp.name_it, '') AS name,
+                COALESCE(sp.category_id, 0) AS category_id,
+                COALESCE(s.name, '') AS set_name,
+                COALESCE(g.slug, '') AS game_slug
+            FROM sealed_products sp
+            INNER JOIN sets s ON s.id = sp.set_id
+            INNER JOIN games g ON g.id = s.game_id
+            WHERE sp.category_id != 1
+            ORDER BY sp.id
+            """
+        )
+        batch: list[dict[str, Any]] = []
+        for row in cur:
+            product_id = row["product_id"]
+            set_id = row["set_id"]
+            name = (row["name"] or "").strip() or "Unknown"
+            category_id = row["category_id"]
+            set_name = (row["set_name"] or "").strip()
+            game_slug = (row["game_slug"] or "").strip()
+            image_path = f"sealed/{str(set_id)}/{str(product_id)}.jpg"
+
+            doc = {
+                "id": f"sealed_{product_id}",
+                "name": name,
+                "set_name": set_name,
+                "game_slug": game_slug,
+                "category_id": category_id,
+                "image": image_path,
+            }
+            batch.append(doc)
+            if len(batch) >= batch_size:
+                client.index(index_name).add_documents(batch)
+                count += len(batch)
+                logger.info("Indexed sealed batch: %d docs (total so far: %d)", len(batch), count)
+                batch = []
+
+        if batch:
+            client.index(index_name).add_documents(batch)
+            count += len(batch)
+            logger.info("Indexed final sealed batch: %d docs (total: %d)", len(batch), count)
+    return count
+
+
 def _configure_meilisearch_index(client: Client, index_name: str) -> None:
-    """Searchable: name and keywords_localized first, then set_name. Filterable: game_slug, set_name."""
+    """Searchable: name, keywords_localized, set_name. Filterable: game_slug, category_id, set_name (per barra di ricerca)."""
     index = client.index(index_name)
     index.update_searchable_attributes(
         ["name", "keywords_localized", "set_name"]
     )
-    index.update_filterable_attributes(["game_slug", "set_name"])
+    index.update_filterable_attributes(["game_slug", "category_id", "set_name"])
 
 
 def run_indexer() -> dict[str, Any]:
@@ -288,6 +354,7 @@ def run_indexer() -> dict[str, Any]:
         "mtg": 0,
         "op": 0,
         "pk": 0,
+        "sealed": 0,
         "total": 0,
         "error": None,
     }
@@ -309,12 +376,13 @@ def run_indexer() -> dict[str, Any]:
         result["mtg"] = _index_mtg_prints(conn, client, index_name, batch_size)
         result["op"] = _index_op_prints(conn, client, index_name, batch_size)
         result["pk"] = _index_pk_prints(conn, client, index_name, batch_size)
-        result["total"] = result["mtg"] + result["op"] + result["pk"]
+        result["sealed"] = _index_sealed_products(conn, client, index_name, batch_size)
+        result["total"] = result["mtg"] + result["op"] + result["pk"] + result["sealed"]
 
         _configure_meilisearch_index(client, index_name)
         logger.info(
-            "Reindex complete: mtg=%d op=%d pk=%d total=%d",
-            result["mtg"], result["op"], result["pk"], result["total"],
+            "Reindex complete: mtg=%d op=%d pk=%d sealed=%d total=%d",
+            result["mtg"], result["op"], result["pk"], result["sealed"], result["total"],
         )
     except Exception as e:
         logger.exception("Indexer failed")
