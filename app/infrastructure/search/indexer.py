@@ -77,6 +77,20 @@ def _build_keywords_localized(original_name: str, trans_list: list[str]) -> list
     return keywords
 
 
+def _clean_image_path(raw_path: str | None) -> str:
+    """
+    Rimuove il prefisso legacy /img/ o img/ dal path immagine.
+    Su S3 le immagini sono salvate senza quel prefisso (es: cards/1/123.jpg).
+    Usata per MTG, OP, PK e Sealed.
+    """
+    raw = (raw_path or "").strip()
+    if raw.startswith("/img/"):
+        return raw.replace("/img/", "", 1)
+    if raw.startswith("img/"):
+        return raw.replace("img/", "", 1)
+    return raw
+
+
 def _index_mtg_prints(
     conn: pymysql.Connection,
     client: Client,
@@ -111,7 +125,7 @@ def _index_mtg_prints(
             print_id = row["print_id"]
             oracle_id = row["oracle_id"] or ""
             printed_name = (row["printed_name"] or "").strip() or "Unknown"
-            image_path = (row["image_path"] or "").strip()
+            image_path = _clean_image_path(row.get("image_path"))
             set_name = (row["set_name"] or "").strip()
             game_slug = (row["game_slug"] or "mtg").strip()
 
@@ -171,7 +185,7 @@ def _index_op_prints(
         for row in cur:
             print_id = row["print_id"]
             printed_name = (row["printed_name"] or "").strip() or "Unknown"
-            image_path = (row["image_path"] or "").strip()
+            image_path = _clean_image_path(row.get("image_path"))
             set_name = (row["set_name"] or "").strip()
             game_slug = (row["game_slug"] or "op").strip()
 
@@ -226,7 +240,7 @@ def _index_pk_prints(
         for row in cur:
             print_id = row["print_id"]
             printed_name = (row["printed_name"] or "").strip() or "Unknown"
-            image_path = (row["image_path"] or "").strip()
+            image_path = _clean_image_path(row.get("image_path"))
             set_name = (row["set_name"] or "").strip()
             game_slug = (row["game_slug"] or "pk").strip()
 
@@ -283,7 +297,7 @@ def _index_sealed_products(
             product_id = row["product_id"]
             name = (row["name"] or "").strip() or "Unknown"
             category_id = row["category_id"]
-            image_path = (row["image_path"] or "").strip()
+            image_path = _clean_image_path(row.get("image_path"))
             set_name = (row["set_name"] or "").strip()
             game_slug = (row["game_slug"] or "").strip()
 
