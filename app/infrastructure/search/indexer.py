@@ -93,9 +93,9 @@ def _index_mtg_prints(
             """
             SELECT
                 cp.id AS print_id,
-                cp.set_id,
                 cp.oracle_id,
                 COALESCE(c.name, '') AS printed_name,
+                cp.image_path,
                 COALESCE(s.name, '') AS set_name,
                 COALESCE(g.slug, 'mtg') AS game_slug
             FROM cards_prints cp
@@ -109,12 +109,11 @@ def _index_mtg_prints(
         batch: list[dict[str, Any]] = []
         for row in cur:
             print_id = row["print_id"]
-            set_id = row["set_id"]
             oracle_id = row["oracle_id"] or ""
             printed_name = (row["printed_name"] or "").strip() or "Unknown"
+            image_path = (row["image_path"] or "").strip()
             set_name = (row["set_name"] or "").strip()
             game_slug = (row["game_slug"] or "mtg").strip()
-            image_path = f"cards/{str(set_id)}/{str(print_id)}.jpg"
 
             keywords_localized = _build_keywords_localized(
                 printed_name, trans_map.get(oracle_id, [])
@@ -150,19 +149,15 @@ def _index_op_prints(
     index_name: str,
     batch_size: int,
 ) -> int:
-    """Index One Piece prints from op_prints JOIN op_cards, sets, games. Entity = card_id."""
-    logger.info("Fetching OP translations from card_translations...")
-    trans_map = _get_translations_for_game(conn, "op")
-
+    """Index One Piece prints from op_prints JOIN op_cards, sets, games. Entity = card_id. Nessuna gestione lingue (solo MTG)."""
     count = 0
     with conn.cursor() as cur:
         cur.execute(
             """
             SELECT
                 op.id AS print_id,
-                op.set_id,
-                op.card_id,
                 COALESCE(oc.name_en, '') AS printed_name,
+                op.image_path,
                 COALESCE(s.name, '') AS set_name,
                 COALESCE(g.slug, 'op') AS game_slug
             FROM op_prints op
@@ -175,16 +170,10 @@ def _index_op_prints(
         batch: list[dict[str, Any]] = []
         for row in cur:
             print_id = row["print_id"]
-            set_id = row["set_id"]
-            card_id = row["card_id"] or ""
             printed_name = (row["printed_name"] or "").strip() or "Unknown"
+            image_path = (row["image_path"] or "").strip()
             set_name = (row["set_name"] or "").strip()
             game_slug = (row["game_slug"] or "op").strip()
-            image_path = f"cards/{str(set_id)}/{str(print_id)}.jpg"
-
-            keywords_localized = _build_keywords_localized(
-                printed_name, trans_map.get(card_id, [])
-            )
 
             doc = {
                 "id": f"op_{print_id}",
@@ -194,7 +183,6 @@ def _index_op_prints(
                 "category_id": 1,
                 "category_name": "Carta Singola",
                 "image": image_path,
-                "keywords_localized": keywords_localized,
             }
             batch.append(doc)
             if len(batch) >= batch_size:
@@ -216,19 +204,15 @@ def _index_pk_prints(
     index_name: str,
     batch_size: int,
 ) -> int:
-    """Index Pokémon prints from pk_prints JOIN pk_cards, sets, games. Entity = card_id. Uses image_url."""
-    logger.info("Fetching PK translations from card_translations...")
-    trans_map = _get_translations_for_game(conn, "pk")
-
+    """Index Pokémon prints from pk_prints JOIN pk_cards, sets, games. Entity = card_id. Immagine da image_url. Nessuna gestione lingue (solo MTG)."""
     count = 0
     with conn.cursor() as cur:
         cur.execute(
             """
             SELECT
                 pp.id AS print_id,
-                pp.set_id,
-                pp.card_id,
                 COALESCE(pc.name_en, '') AS printed_name,
+                pp.image_url AS image_path,
                 COALESCE(s.name, '') AS set_name,
                 COALESCE(g.slug, 'pk') AS game_slug
             FROM pk_prints pp
@@ -241,16 +225,10 @@ def _index_pk_prints(
         batch: list[dict[str, Any]] = []
         for row in cur:
             print_id = row["print_id"]
-            set_id = row["set_id"]
-            card_id = row["card_id"] or ""
             printed_name = (row["printed_name"] or "").strip() or "Unknown"
+            image_path = (row["image_path"] or "").strip()
             set_name = (row["set_name"] or "").strip()
             game_slug = (row["game_slug"] or "pk").strip()
-            image_path = f"cards/{str(set_id)}/{str(print_id)}.jpg"
-
-            keywords_localized = _build_keywords_localized(
-                printed_name, trans_map.get(card_id, [])
-            )
 
             doc = {
                 "id": f"pk_{print_id}",
@@ -260,7 +238,6 @@ def _index_pk_prints(
                 "category_id": 1,
                 "category_name": "Carta Singola",
                 "image": image_path,
-                "keywords_localized": keywords_localized,
             }
             batch.append(doc)
             if len(batch) >= batch_size:
@@ -289,9 +266,9 @@ def _index_sealed_products(
             """
             SELECT
                 sp.id AS product_id,
-                sp.set_id,
                 COALESCE(sp.name_en, sp.name_it, '') AS name,
                 COALESCE(sp.category_id, 0) AS category_id,
+                sp.image_path,
                 COALESCE(s.name, '') AS set_name,
                 COALESCE(g.slug, '') AS game_slug
             FROM sealed_products sp
@@ -304,12 +281,11 @@ def _index_sealed_products(
         batch: list[dict[str, Any]] = []
         for row in cur:
             product_id = row["product_id"]
-            set_id = row["set_id"]
             name = (row["name"] or "").strip() or "Unknown"
             category_id = row["category_id"]
+            image_path = (row["image_path"] or "").strip()
             set_name = (row["set_name"] or "").strip()
             game_slug = (row["game_slug"] or "").strip()
-            image_path = f"sealed/{str(set_id)}/{str(product_id)}.jpg"
 
             doc = {
                 "id": f"sealed_{product_id}",
