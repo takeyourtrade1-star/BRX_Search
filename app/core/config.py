@@ -41,6 +41,12 @@ class Settings(BaseSettings):
         description="Number of documents per batch when indexing",
     )
 
+    # Admin API Key (per operazioni come reindex, senza JWT)
+    SEARCH_ADMIN_API_KEY: SecretStr = Field(
+        ...,
+        description="API Key for admin operations (e.g. reindex); send in header X-Admin-API-Key",
+    )
+
     # JWT (Resource Server: validate tokens from Auth Service with public key only)
     JWT_PUBLIC_KEY: SecretStr = Field(
         ...,

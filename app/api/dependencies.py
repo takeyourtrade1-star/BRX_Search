@@ -5,7 +5,7 @@ No API key, no DB access — only cryptographic signature verification (Zero Tru
 import logging
 
 import jwt
-from fastapi import Depends, HTTPException, status
+from fastapi import Depends, Header, HTTPException, status
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 
 from app.core.config import get_settings
@@ -110,3 +110,25 @@ async def get_current_superuser(
         )
 
     return payload
+
+
+async def validate_admin_key(
+    x_admin_api_key: str | None = Header(None, alias="X-Admin-API-Key"),
+) -> None:
+    """
+    Valida l'API Key per le operazioni admin (es. reindex).
+    Richiede l'header X-Admin-API-Key con valore uguale a SEARCH_ADMIN_API_KEY.
+    Se manca o non corrisponde, solleva 403 Forbidden.
+    """
+    settings = get_settings()
+    expected = settings.SEARCH_ADMIN_API_KEY.get_secret_value()
+    if not expected:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Admin API key not configured",
+        )
+    if not x_admin_api_key or x_admin_api_key.strip() != expected:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Invalid or missing X-Admin-API-Key",
+        )
