@@ -41,20 +41,18 @@ class Settings(BaseSettings):
         description="Number of documents per batch when indexing",
     )
 
-    # Admin API Key (per operazioni come reindex, senza JWT)
+    # Admin API Key (per operazioni come reindex)
     SEARCH_ADMIN_API_KEY: SecretStr = Field(
         ...,
-        description="API Key for admin operations (e.g. reindex); send in header X-Admin-API-Key",
+        description="API Key per operazioni admin (header X-Admin-API-Key)",
     )
 
-    # JWT (Resource Server: validate tokens from Auth Service with public key only)
-    JWT_PUBLIC_KEY: SecretStr = Field(
-        ...,
-        description="RSA public key (PEM) to verify JWT signatures from Auth Service",
-    )
-    JWT_ALGORITHM: str = Field(
-        default="RS256",
-        description="JWT signing algorithm (must match Auth Service)",
+    # CORS: origini consentite per chiamate dal browser (es. frontend Next.js)
+    # Es: "http://localhost:3000" oppure "http://localhost:3000,https://miodominio.com"
+    # "*" = consenti tutte le origini (solo se necessario)
+    CORS_ORIGINS: str = Field(
+        default="",
+        description="Comma-separated list of allowed origins for CORS, or * for all",
     )
 
 

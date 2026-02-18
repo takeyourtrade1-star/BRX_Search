@@ -9,6 +9,15 @@ router = APIRouter(prefix="/api/admin", tags=["Admin"])
 logger = logging.getLogger(__name__)
 
 
+@router.get("", summary="Verifica endpoint admin")
+async def admin_info() -> dict:
+    """Permette di verificare che il servizio sia il Search Engine: GET /api/admin."""
+    return {
+        "service": "BRX Search (admin)",
+        "reindex": "POST /api/admin/reindex con header X-Admin-API-Key",
+    }
+
+
 def background_reindex():
     """Wrapper per gestire eccezioni nel background task"""
     try:
@@ -24,8 +33,8 @@ def background_reindex():
 
 @router.post(
     "/reindex",
-    summary="Trigger full reindex (Async)",
-    description="Requires header X-Admin-API-Key with the configured admin API key. No JWT.",
+    summary="Avvia reindex totale (async)",
+    description="Avvia il reindex totale. Richiede l'header X-Admin-API-Key.",
     status_code=status.HTTP_202_ACCEPTED,
 )
 async def reindex(
