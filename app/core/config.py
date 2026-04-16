@@ -41,9 +41,9 @@ class Settings(BaseSettings):
         description="Number of documents per batch when indexing",
     )
 
-    # Admin API Key (per operazioni come reindex)
+    # Admin API Key (per operazioni come reindex). Se assente l'app parte ma reindex ritorna 503.
     SEARCH_ADMIN_API_KEY: SecretStr = Field(
-        ...,
+        default=SecretStr(""),
         description="API Key per operazioni admin (header X-Admin-API-Key)",
     )
 

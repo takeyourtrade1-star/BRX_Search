@@ -3,6 +3,7 @@ Search indexer: syncs card prints from MySQL to Meilisearch.
 Print-first search with centralized multilingual support via card_translations + keywords_localized.
 """
 import logging
+from datetime import date, datetime
 from typing import Any
 
 import pymysql
@@ -91,6 +92,43 @@ def _clean_image_path(raw_path: str | None) -> str:
     return raw
 
 
+def _parse_available_languages(raw: Any) -> list[str]:
+    """Parse available_languages from DB (JSON string, bytes, or list). Per pagina dettaglio MTG."""
+    if raw is None:
+        return []
+    if isinstance(raw, list):
+        return [str(x) for x in raw if x]
+    if isinstance(raw, bytes):
+        raw = raw.decode("utf-8", errors="ignore")
+    if isinstance(raw, str):
+        raw = raw.strip()
+        if not raw:
+            return []
+        try:
+            import json
+            out = json.loads(raw)
+            return [str(x) for x in out] if isinstance(out, list) else []
+        except Exception:
+            return []
+    return []
+
+def _format_release_date(raw: Any) -> str | None:
+    """Normalize DB date/datetime/string values to YYYY-MM-DD."""
+    if raw is None:
+        return None
+    if isinstance(raw, datetime):
+        return raw.date().isoformat()
+    if isinstance(raw, date):
+        return raw.isoformat()
+    if isinstance(raw, str):
+        raw = raw.strip()
+        if not raw:
+            return None
+        # Accept already normalized values or datetime-like strings.
+        return raw[:10]
+    return None
+
+
 def _index_mtg_prints(
     conn: pymysql.Connection,
     client: Client,
@@ -107,11 +145,18 @@ def _index_mtg_prints(
             """
             SELECT
                 cp.id AS print_id,
+                cp.cardtrader_id,
                 cp.oracle_id,
                 COALESCE(c.name, '') AS printed_name,
                 cp.image_path,
                 COALESCE(s.name, '') AS set_name,
-                COALESCE(g.slug, 'mtg') AS game_slug
+                s.code AS set_code,
+                s.release_date,
+                s.set_icon_uri,
+                COALESCE(g.slug, 'mtg') AS game_slug,
+                cp.collector_number,
+                cp.rarity,
+                cp.available_languages
             FROM cards_prints cp
             INNER JOIN cards c ON c.oracle_id = cp.oracle_id
             INNER JOIN sets s ON s.id = cp.set_id
@@ -123,11 +168,18 @@ def _index_mtg_prints(
         batch: list[dict[str, Any]] = []
         for row in cur:
             print_id = row["print_id"]
+            cardtrader_id = row.get("cardtrader_id")
             oracle_id = row["oracle_id"] or ""
             printed_name = (row["printed_name"] or "").strip() or "Unknown"
             image_path = _clean_image_path(row.get("image_path"))
             set_name = (row["set_name"] or "").strip()
+            set_code = (row.get("set_code") or "").strip()
+            release_date = _format_release_date(row.get("release_date"))
+            set_icon_uri = (row.get("set_icon_uri") or "").strip() or None
             game_slug = (row["game_slug"] or "mtg").strip()
+            collector_number = row.get("collector_number")
+            rarity = row.get("rarity")
+            available_languages = _parse_available_languages(row.get("available_languages"))
 
             keywords_localized = _build_keywords_localized(
                 printed_name, trans_map.get(oracle_id, [])
@@ -137,12 +189,23 @@ def _index_mtg_prints(
                 "id": f"mtg_{print_id}",
                 "name": printed_name,
                 "set_name": set_name,
+                "set_code": set_code,
+                "release_date": release_date,
+                "set_icon_uri": set_icon_uri,
                 "game_slug": game_slug,
                 "category_id": 1,
                 "category_name": "Carta Singola",
                 "image": image_path,
                 "keywords_localized": keywords_localized,
             }
+            if cardtrader_id is not None:
+                doc["cardtrader_id"] = int(cardtrader_id)
+            if collector_number is not None and str(collector_number).strip():
+                doc["collector_number"] = str(collector_number).strip()
+            if rarity is not None and str(rarity).strip():
+                doc["rarity"] = str(rarity).strip()
+            if available_languages:
+                doc["available_languages"] = available_languages
             batch.append(doc)
             if len(batch) >= batch_size:
                 client.index(index_name).add_documents(batch)
@@ -170,9 +233,13 @@ def _index_op_prints(
             """
             SELECT
                 op.id AS print_id,
+                op.cardtrader_id,
                 COALESCE(oc.name_en, '') AS printed_name,
                 op.image_path,
                 COALESCE(s.name, '') AS set_name,
+                s.code AS set_code,
+                s.release_date,
+                s.set_icon_uri,
                 COALESCE(g.slug, 'op') AS game_slug
             FROM op_prints op
             INNER JOIN op_cards oc ON oc.card_id = op.card_id
@@ -184,20 +251,29 @@ def _index_op_prints(
         batch: list[dict[str, Any]] = []
         for row in cur:
             print_id = row["print_id"]
+            cardtrader_id = row.get("cardtrader_id")
             printed_name = (row["printed_name"] or "").strip() or "Unknown"
             image_path = _clean_image_path(row.get("image_path"))
             set_name = (row["set_name"] or "").strip()
+            set_code = (row.get("set_code") or "").strip()
+            release_date = _format_release_date(row.get("release_date"))
+            set_icon_uri = (row.get("set_icon_uri") or "").strip() or None
             game_slug = (row["game_slug"] or "op").strip()
 
             doc = {
                 "id": f"op_{print_id}",
                 "name": printed_name,
                 "set_name": set_name,
+                "set_code": set_code,
+                "release_date": release_date,
+                "set_icon_uri": set_icon_uri,
                 "game_slug": game_slug,
                 "category_id": 1,
                 "category_name": "Carta Singola",
                 "image": image_path,
             }
+            if cardtrader_id is not None:
+                doc["cardtrader_id"] = int(cardtrader_id)
             batch.append(doc)
             if len(batch) >= batch_size:
                 client.index(index_name).add_documents(batch)
@@ -225,9 +301,13 @@ def _index_pk_prints(
             """
             SELECT
                 pp.id AS print_id,
+                pp.cardtrader_id,
                 COALESCE(pc.name_en, '') AS printed_name,
                 pp.image_url AS image_path,
                 COALESCE(s.name, '') AS set_name,
+                s.code AS set_code,
+                s.release_date,
+                s.set_icon_uri,
                 COALESCE(g.slug, 'pk') AS game_slug
             FROM pk_prints pp
             INNER JOIN pk_cards pc ON pc.card_id = pp.card_id
@@ -239,20 +319,29 @@ def _index_pk_prints(
         batch: list[dict[str, Any]] = []
         for row in cur:
             print_id = row["print_id"]
+            cardtrader_id = row.get("cardtrader_id")
             printed_name = (row["printed_name"] or "").strip() or "Unknown"
             image_path = _clean_image_path(row.get("image_path"))
             set_name = (row["set_name"] or "").strip()
+            set_code = (row.get("set_code") or "").strip()
+            release_date = _format_release_date(row.get("release_date"))
+            set_icon_uri = (row.get("set_icon_uri") or "").strip() or None
             game_slug = (row["game_slug"] or "pk").strip()
 
             doc = {
                 "id": f"pk_{print_id}",
                 "name": printed_name,
                 "set_name": set_name,
+                "set_code": set_code,
+                "release_date": release_date,
+                "set_icon_uri": set_icon_uri,
                 "game_slug": game_slug,
                 "category_id": 1,
                 "category_name": "Carta Singola",
                 "image": image_path,
             }
+            if cardtrader_id is not None:
+                doc["cardtrader_id"] = int(cardtrader_id)
             batch.append(doc)
             if len(batch) >= batch_size:
                 client.index(index_name).add_documents(batch)
@@ -280,10 +369,14 @@ def _index_sealed_products(
             """
             SELECT
                 sp.id AS product_id,
+                sp.cardtrader_id,
                 COALESCE(sp.name_en, sp.name_it, '') AS name,
                 COALESCE(sp.category_id, 0) AS category_id,
                 sp.image_path,
                 COALESCE(s.name, '') AS set_name,
+                s.code AS set_code,
+                s.release_date,
+                s.set_icon_uri,
                 COALESCE(g.slug, '') AS game_slug
             FROM sealed_products sp
             INNER JOIN sets s ON s.id = sp.set_id
@@ -295,20 +388,29 @@ def _index_sealed_products(
         batch: list[dict[str, Any]] = []
         for row in cur:
             product_id = row["product_id"]
+            cardtrader_id = row.get("cardtrader_id")
             name = (row["name"] or "").strip() or "Unknown"
             category_id = row["category_id"]
             image_path = _clean_image_path(row.get("image_path"))
             set_name = (row["set_name"] or "").strip()
+            set_code = (row.get("set_code") or "").strip()
+            release_date = _format_release_date(row.get("release_date"))
+            set_icon_uri = (row.get("set_icon_uri") or "").strip() or None
             game_slug = (row["game_slug"] or "").strip()
 
             doc = {
                 "id": f"sealed_{product_id}",
                 "name": name,
                 "set_name": set_name,
+                "set_code": set_code,
+                "release_date": release_date,
+                "set_icon_uri": set_icon_uri,
                 "game_slug": game_slug,
                 "category_id": category_id,
                 "image": image_path,
             }
+            if cardtrader_id is not None:
+                doc["cardtrader_id"] = int(cardtrader_id)
             batch.append(doc)
             if len(batch) >= batch_size:
                 client.index(index_name).add_documents(batch)
@@ -324,12 +426,13 @@ def _index_sealed_products(
 
 
 def _configure_meilisearch_index(client: Client, index_name: str) -> None:
-    """Searchable: name, keywords_localized, set_name. Filterable: game_slug, category_id, set_name (per barra di ricerca)."""
+    """Searchable: name, keywords_localized, set_name. Filterable: id, cardtrader_id, game_slug, category_id, set_name, release_date, rarity. Sortable: name, set_name, release_date."""
     index = client.index(index_name)
     index.update_searchable_attributes(
         ["name", "keywords_localized", "set_name"]
     )
-    index.update_filterable_attributes(["game_slug", "category_id", "set_name"])
+    index.update_filterable_attributes(["id", "cardtrader_id", "game_slug", "category_id", "set_name", "release_date", "rarity"])
+    index.update_sortable_attributes(["name", "set_name", "release_date"])
 
 
 def run_indexer() -> dict[str, Any]:
