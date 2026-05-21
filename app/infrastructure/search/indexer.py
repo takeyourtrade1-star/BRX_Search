@@ -198,6 +198,9 @@ def _index_mtg_prints(
                 "image": image_path,
                 "keywords_localized": keywords_localized,
             }
+            # oracle_id groups all prints of the same card face across different sets (MTG-specific UUID)
+            if oracle_id:
+                doc["oracle_id"] = oracle_id
             if cardtrader_id is not None:
                 doc["cardtrader_id"] = int(cardtrader_id)
             if collector_number is not None and str(collector_number).strip():
@@ -233,6 +236,7 @@ def _index_op_prints(
             """
             SELECT
                 op.id AS print_id,
+                op.card_id AS card_id,
                 op.cardtrader_id,
                 COALESCE(oc.name_en, '') AS printed_name,
                 op.image_path,
@@ -251,6 +255,7 @@ def _index_op_prints(
         batch: list[dict[str, Any]] = []
         for row in cur:
             print_id = row["print_id"]
+            card_id = row.get("card_id")
             cardtrader_id = row.get("cardtrader_id")
             printed_name = (row["printed_name"] or "").strip() or "Unknown"
             image_path = _clean_image_path(row.get("image_path"))
@@ -272,6 +277,8 @@ def _index_op_prints(
                 "category_name": "Carta Singola",
                 "image": image_path,
             }
+            if card_id is not None:
+                doc["card_id"] = str(card_id)
             if cardtrader_id is not None:
                 doc["cardtrader_id"] = int(cardtrader_id)
             batch.append(doc)
@@ -301,6 +308,7 @@ def _index_pk_prints(
             """
             SELECT
                 pp.id AS print_id,
+                pp.card_id AS card_id,
                 pp.cardtrader_id,
                 COALESCE(pc.name_en, '') AS printed_name,
                 pp.image_url AS image_path,
@@ -319,6 +327,7 @@ def _index_pk_prints(
         batch: list[dict[str, Any]] = []
         for row in cur:
             print_id = row["print_id"]
+            card_id = row.get("card_id")
             cardtrader_id = row.get("cardtrader_id")
             printed_name = (row["printed_name"] or "").strip() or "Unknown"
             image_path = _clean_image_path(row.get("image_path"))
@@ -340,6 +349,8 @@ def _index_pk_prints(
                 "category_name": "Carta Singola",
                 "image": image_path,
             }
+            if card_id is not None:
+                doc["card_id"] = str(card_id)
             if cardtrader_id is not None:
                 doc["cardtrader_id"] = int(cardtrader_id)
             batch.append(doc)
@@ -425,19 +436,36 @@ def _index_sealed_products(
     return count
 
 
-def _configure_meilisearch_index(client: Client, index_name: str) -> None:
-    """Searchable: name, keywords_localized, set_name. Filterable: id, cardtrader_id, game_slug, category_id, set_name, release_date, rarity. Sortable: name, set_name, release_date."""
-    index = client.index(index_name)
+def configure_meilisearch_index(
+    client: Client | None = None,
+    index_name: str | None = None,
+) -> None:
+    """
+    Searchable: name, keywords_localized, set_name.
+    Filterable: id, cardtrader_id, oracle_id, card_id, game_slug, category_id, set_name, release_date, rarity.
+    Sortable: name, set_name, release_date.
+
+    oracle_id / card_id sono obbligatori per le ristampe (filtro per entità carta).
+    """
+    settings = get_settings()
+    resolved_index = index_name or settings.MEILISEARCH_INDEX_NAME
+    resolved_client = client or _get_meilisearch_client()
+    index = resolved_client.index(resolved_index)
     index.update_searchable_attributes(
         ["name", "keywords_localized", "set_name"]
     )
-    index.update_filterable_attributes(["id", "cardtrader_id", "game_slug", "category_id", "set_name", "release_date", "rarity"])
+    index.update_filterable_attributes([
+        "id", "cardtrader_id", "oracle_id", "card_id",
+        "game_slug", "category_id", "set_name", "release_date", "rarity",
+    ])
     index.update_sortable_attributes(["name", "set_name", "release_date"])
+    logger.info("Meilisearch index %s settings updated", resolved_index)
 
 
 def run_indexer() -> dict[str, Any]:
     """
-    Full reindex: load translations per game from card_translations, index MTG/OP/PK, configure Meilisearch.
+    Full reindex: load translations per game from card_translations, index MTG/OP/PK/Sealed, configure Meilisearch.
+    MTG docs include oracle_id (groups reprints); OP and PK docs include card_id (groups prints of the same card).
     Returns a summary with counts and any error message.
     """
     settings = get_settings()
@@ -472,7 +500,7 @@ def run_indexer() -> dict[str, Any]:
         result["sealed"] = _index_sealed_products(conn, client, index_name, batch_size)
         result["total"] = result["mtg"] + result["op"] + result["pk"] + result["sealed"]
 
-        _configure_meilisearch_index(client, index_name)
+        configure_meilisearch_index(client, index_name)
         logger.info(
             "Reindex complete: mtg=%d op=%d pk=%d sealed=%d total=%d",
             result["mtg"], result["op"], result["pk"], result["sealed"], result["total"],

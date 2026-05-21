@@ -43,11 +43,19 @@ Nessun path viene inventato: si usa solo il valore salvato in database.
 
 ---
 
-## 3. Configurazione Meilisearch: `_configure_meilisearch_index`
+## 3. Configurazione Meilisearch: `configure_meilisearch_index`
 
-- **filterableAttributes:** `["game_slug", "category_id", "set_name"]`  
-  → filtri in barra di ricerca (gioco, categoria, set).
+- **filterableAttributes:** `id`, `cardtrader_id`, `oracle_id`, `card_id`, `game_slug`, `category_id`, `set_name`, `release_date`, `rarity`  
+  → `oracle_id` (MTG) e `card_id` (OP/PK) servono per le **ristampe**; `id` per lookup documento.
 - **searchableAttributes:** `["name", "keywords_localized", "set_name"]`.
+- **sortableAttributes:** `name`, `set_name`, `release_date`.
+
+Solo impostazioni (senza reindex documenti):
+
+```bash
+python configure_index.py
+# oppure POST /api/admin/configure-index
+```
 
 ---
 
@@ -61,4 +69,13 @@ Nessun path viene inventato: si usa solo il valore salvato in database.
 
 ## Come eseguire il reindex
 
-Dopo il deploy, chiamare l’endpoint admin che invoca `run_indexer()` (es. `POST /admin/reindex`) per sincronizzare MySQL → Meilisearch.
+Dopo il deploy, chiamare l’endpoint admin che invoca `run_indexer()` (es. `POST /api/admin/reindex`) per sincronizzare MySQL → Meilisearch.
+
+Solo impostazioni indice (ristampe / filtri `oracle_id`, `card_id`):
+
+```bash
+python configure_index.py
+# oppure POST /api/admin/configure-index
+```
+
+Guida operativa ristampe end-to-end: `docs/RISTAMPE_OPS.md`.

@@ -2,7 +2,7 @@ from fastapi import APIRouter, Depends, BackgroundTasks, status
 from fastapi.responses import JSONResponse
 
 from app.api.dependencies import validate_admin_key
-from app.infrastructure.search.indexer import run_indexer
+from app.infrastructure.search.indexer import configure_meilisearch_index, run_indexer
 import logging
 
 router = APIRouter(prefix="/api/admin", tags=["Admin"])
@@ -15,6 +15,7 @@ async def admin_info() -> dict:
     return {
         "service": "BRX Search (admin)",
         "reindex": "POST /api/admin/reindex con header X-Admin-API-Key",
+        "configure_index": "POST /api/admin/configure-index con header X-Admin-API-Key",
     }
 
 
@@ -51,3 +52,26 @@ async def reindex(
             "message": "Reindexing started in background. Check logs for progress."
         },
     )
+
+
+@router.post(
+    "/configure-index",
+    summary="Aggiorna solo impostazioni indice Meilisearch",
+    description="Imposta filterable/searchable/sortable (oracle_id, card_id, id, …). Non reindicizza i documenti.",
+    status_code=status.HTTP_200_OK,
+)
+async def configure_index(
+    _: None = Depends(validate_admin_key),
+) -> dict:
+    try:
+        configure_meilisearch_index()
+        return {
+            "status": "ok",
+            "message": "Index settings updated (filterableAttributes include oracle_id, card_id, id).",
+        }
+    except Exception as e:
+        logger.exception("configure-index failed")
+        return JSONResponse(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            content={"status": "error", "message": str(e)},
+        )
